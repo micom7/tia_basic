@@ -1,0 +1,15 @@
+﻿// ==============================================================================
+// UDT_RouteCmd - Команда маршруту (Mailbox Pattern v2.0)
+// ==============================================================================
+// Версія: 2.0.3
+// Дата: 2026-03-01
+// ==============================================================================
+
+TYPE "UDT_RouteCmd"
+{ S7_Optimized_Access := 'TRUE' }
+STRUCT
+  RC_Cmd       : USINT;  // RT_CMD_NONE / RT_CMD_START / RT_CMD_STOP_OP
+  RC_StepCount : USINT;  // 0.."ROUTE_MAX_STEPS"
+  RC_Steps     : ARRAY[1.."ROUTE_MAX_STEPS"] OF "UDT_RouteStep";
+END_STRUCT
+END_TYPE

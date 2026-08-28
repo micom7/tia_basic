@@ -1,0 +1,60 @@
+﻿// ==============================================================================
+// FC_ManualMechCmdHandler - MailBox перекладач для арбітра
+// ==============================================================================
+// Версія: 6.0.0 (Максимальне спрощення)
+// Дата: 2026-02-15
+// ==============================================================================
+// КОНЦЕПЦІЯ:
+//   Хендлер = MailBox перекладач між SCADA і Арбітром
+//   - Читає команди з MailBox (мова SCADA)
+//   - Викликає арбітр (мова механізмів)
+//   - Пише відповідь в MailBox (коди арбітра ARB_*)
+// ==============================================================================
+
+FUNCTION "FC_ManualMechCmdHandler" : VOID
+{ S7_Optimized_Access := 'TRUE' }
+
+VAR_INPUT
+END_VAR
+
+VAR_TEMP
+    slot       : UINT;
+    commitIn   : UDINT;
+    lastAck    : UDINT;
+    rejectCode : USINT;
+END_VAR
+
+BEGIN
+    // =========================================================
+    // 1. Читаємо MailBox (мова SCADA)
+    // =========================================================
+    #commitIn := "DB_PlcScada_MailBox".Req.Commit;
+    #lastAck := "DB_PlcScada_MailBox".Ack.AckCommit;
+    
+    IF #commitIn = #lastAck THEN
+        RETURN; // Немає нової команди
+    END_IF;
+    
+    #slot := "DB_PlcScada_MailBox".Req.Slot;
+    
+    // =========================================================
+    // 2. Викликаємо арбітр (мова механізмів)
+    //    Арбітр сам розбереться з командою (meta чи звичайна)
+    // =========================================================
+    #rejectCode := "FC_ArbiterMech"(
+        OwnerReq := "OWNER_SCADA",
+        OwnerReqId := UINT#0,
+        ReqCmd := "DB_PlcScada_MailBox".Req.Cmd,
+        ReqParam1 := "DB_PlcScada_MailBox".Req.Param1,
+        M := "DB_Mechs".Mechs[#slot]
+    );
+    
+    // =========================================================
+    // 3. Пишемо відповідь в MailBox (коди арбітра ARB_*)
+    // =========================================================
+    "DB_PlcScada_MailBox".Ack.AckCommit := #commitIn;
+    "DB_PlcScada_MailBox".Ack.AckOk := (#rejectCode = "ARB_OK");
+    "DB_PlcScada_MailBox".Ack.RejectCode := #rejectCode;
+    "DB_PlcScada_MailBox".Ack.Slot := #slot;
+    
+END_FUNCTION

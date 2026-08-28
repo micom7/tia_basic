@@ -1,0 +1,189 @@
+FUNCTION "FC_Gate2P" : Void
+{ S7_Optimized_Access := 'TRUE' }
+VERSION : 1.4
+   VAR_IN_OUT
+      G : "UDT_Gate2P";
+      B : "UDT_BaseMechanism";
+   END_VAR
+
+   VAR_TEMP
+      elapsedMs        : DInt;
+      nowTck           : DInt;
+      forceBreaker     : Bool;
+      forceMoveTimeout : Bool;
+      forcePosUnknown  : Bool;
+      isFault          : Bool;
+      isBlocked        : Bool;
+      isKnownPosition  : Bool;
+      targetReached    : Bool;
+      paramValid       : Bool;
+   END_VAR
+
+BEGIN
+
+REGION "0) Декодування форсування"
+    // Єдина таблиця бітів (спільна для всіх механізмів):
+    // BIT0(1)=forceBreaker, BIT4(16)=forceMoveTimeout, BIT5(32)=forcePosUnknown
+    #forceBreaker     := (#B.Force_Code AND 1)  <> 0;
+    #forceMoveTimeout := (#B.Force_Code AND 16) <> 0;
+    #forcePosUnknown  := (#B.Force_Code AND 32) <> 0;
+END_REGION
+
+REGION "1) RESET (Тільки за умови усунення причини)"
+    IF #B.Cmd = "CMD_RESET" THEN
+        CASE #B.FLTCode OF
+            "FLT_BREAKER":
+                IF #G.DI_Breaker_OK OR #forceBreaker THEN #B.FLTCode := "FLT_NONE"; END_IF;
+
+            "FLT_GATE_MOVE_TIMEOUT", "FLT_GATE_POS_UNKNOWN", "FLT_BOTH_SENSORS":
+                #B.FLTCode := "FLT_NONE";
+        END_CASE;
+
+        IF #B.FLTCode = "FLT_NONE" AND #B.Status = "STS_FAULT" THEN
+            #B.Status := "STS_IDLE";
+            #G.MoveStartMs := 0;
+            #G.UnknownPositionMs := 0;
+        END_IF;
+    END_IF;
+END_REGION
+
+REGION "2) Обробка блокувань"
+    IF NOT #B.Enable_OK THEN
+        #B.Status := "STS_DISABLED";
+        #isBlocked := TRUE;
+    ELSIF #B.LocalManual THEN
+        #B.Status := "STS_LOCAL";
+        #isBlocked := TRUE;
+    ELSE
+        #isBlocked := FALSE;
+        IF (#B.Status = "STS_DISABLED") OR (#B.Status = "STS_LOCAL") THEN
+            #B.Status := "STS_IDLE";
+        END_IF;
+    END_IF;
+
+    // Скидання міток часу при блокуванні
+    IF #isBlocked THEN
+        #G.MoveStartMs := 0;
+        #G.UnknownPositionMs := 0;
+    END_IF;
+END_REGION
+
+REGION "3) Моніторинг аварій (Diagnostic Latch)"
+    IF #B.FLTCode = "FLT_NONE" AND NOT #isBlocked THEN
+        IF NOT #G.DI_Breaker_OK THEN
+            #B.FLTCode := "FLT_BREAKER";
+        ELSIF #G.DI_Pos0_OK AND #G.DI_Pos1_OK THEN
+            #B.FLTCode := "FLT_BOTH_SENSORS";
+        END_IF;
+    END_IF;
+END_REGION
+
+REGION "4) Визначення виконавчої аварії"
+    #isFault := FALSE;
+    IF #B.FLTCode <> "FLT_NONE" THEN
+        CASE #B.FLTCode OF
+            "FLT_BREAKER":           #isFault := NOT #forceBreaker;
+            "FLT_GATE_MOVE_TIMEOUT": #isFault := NOT #forceMoveTimeout;
+            "FLT_GATE_POS_UNKNOWN":  #isFault := NOT #forcePosUnknown;
+            "FLT_BOTH_SENSORS":      #isFault := TRUE;
+        END_CASE;
+    END_IF;
+
+    IF #isFault THEN #B.Status := "STS_FAULT"; END_IF;
+    #isFault := (#B.Status = "STS_FAULT");
+END_REGION
+
+REGION "5 & 6) Машина станів (FSM) та обробка команд"
+    #isKnownPosition := #G.DI_Pos0_OK OR #G.DI_Pos1_OK;
+
+    IF (NOT #isFault) AND (NOT #isBlocked) THEN
+        IF #B.Cmd <> "CMD_NONE" THEN #B.LastCmd := #B.Cmd; END_IF;
+
+        CASE #B.Status OF
+            "STS_IDLE":
+                // Контроль перебування в невідомій позиції
+                IF NOT #isKnownPosition THEN
+                    IF #G.UnknownPositionMs = 0 THEN #G.UnknownPositionMs := TIME_TCK(); END_IF;
+
+                    IF "FC_TimeElapsedMs"(StartTck := #G.UnknownPositionMs, TimeoutMs := "TimeoutMs_Gate_Position_Unknown",
+                                          ElapsedMs => #elapsedMs, NowTck => #nowTck) THEN
+                        #B.FLTCode := "FLT_GATE_POS_UNKNOWN";
+                        #B.Status := "STS_FAULT";
+                    END_IF;
+                ELSE
+                    #G.UnknownPositionMs := 0;
+                END_IF;
+
+                // Старт руху
+                IF #B.Cmd = "CMD_START" THEN
+                    #targetReached := (#B.CmdParam1 = "CMD_GATE_POS0" AND #G.DI_Pos0_OK) OR
+                                     (#B.CmdParam1 = "CMD_GATE_POS1" AND #G.DI_Pos1_OK);
+                    #paramValid := (#B.CmdParam1 = "CMD_GATE_POS0") OR (#B.CmdParam1 = "CMD_GATE_POS1");
+
+                    IF #paramValid AND NOT #targetReached THEN
+                        #B.Status := "STS_STARTING";
+                        #G.MoveStartMs := TIME_TCK();
+                    END_IF;
+                END_IF;
+
+            "STS_STARTING":
+                // Перехід у RUNNING, якщо засувка почала рух (зійшла з кінцевика)
+                IF (#B.CmdParam1 = "CMD_GATE_POS0" AND NOT #G.DI_Pos0_OK) OR
+                   (#B.CmdParam1 = "CMD_GATE_POS1" AND NOT #G.DI_Pos1_OK) THEN
+                    #B.Status := "STS_RUNNING";
+                ELSIF #isKnownPosition THEN // Якщо вже на іншому кінцевику або не зійшла
+                    #B.Status := "STS_IDLE";
+                END_IF;
+
+            "STS_RUNNING":
+                // Таймер контролю руху
+                IF "FC_TimeElapsedMs"(StartTck := #G.MoveStartMs, TimeoutMs := "TimeoutMs_Gate_Move",
+                                      ElapsedMs => #elapsedMs, NowTck => #nowTck) THEN
+                    #B.FLTCode := "FLT_GATE_MOVE_TIMEOUT";
+                    #B.Status := "STS_FAULT";
+                END_IF;
+
+                // Успішне завершення руху
+                IF (#B.CmdParam1 = "CMD_GATE_POS0" AND #G.DI_Pos0_OK) OR
+                   (#B.CmdParam1 = "CMD_GATE_POS1" AND #G.DI_Pos1_OK) THEN
+                    #B.Status := "STS_STOPPING";
+                END_IF;
+
+            "STS_STOPPING":
+                IF #isKnownPosition THEN
+                    #B.Status := "STS_IDLE";
+                    #G.MoveStartMs := 0;
+                    #G.UnknownPositionMs := 0;
+                END_IF;
+        END_CASE;
+
+        // Пріоритет команди STOP
+        IF #B.Cmd = "CMD_STOP" AND (#B.Status = "STS_STARTING" OR #B.Status = "STS_RUNNING") THEN
+            #B.Status := "STS_STOPPING";
+        END_IF;
+    END_IF;
+END_REGION
+
+REGION "7) Формування виходів DO та Status_Param"
+    IF (#B.Status = "STS_STARTING") OR (#B.Status = "STS_RUNNING") THEN
+        #G.DO_Pos0 := (#B.CmdParam1 = "CMD_GATE_POS0");
+        #G.DO_Pos1 := (#B.CmdParam1 = "CMD_GATE_POS1");
+    ELSE
+        #G.DO_Pos0 := FALSE;
+        #G.DO_Pos1 := FALSE;
+    END_IF;
+
+    // Поточна фізична позиція (оновлюється щосканово за кінцевиками)
+    // Обидва датчики активні = аварія FLT_BOTH_SENSORS → позиція невідома
+    IF #G.DI_Pos0_OK AND NOT #G.DI_Pos1_OK THEN
+        #B.Status_Param := "GATE_AT_POS0";    // = 6
+    ELSIF #G.DI_Pos1_OK AND NOT #G.DI_Pos0_OK THEN
+        #B.Status_Param := "GATE_AT_POS1";    // = 7
+    ELSE
+        #B.Status_Param := 0;                 // невідома (в русі, обидва датчики, або не ініціалізована)
+    END_IF;
+
+    #B.Cmd := "CMD_NONE";
+END_REGION
+
+END_FUNCTION

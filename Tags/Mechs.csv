@@ -1,0 +1,6 @@
+Name;Path;Data Type;Value;Comment
+GATES2P_COUNT;Mechs_;UInt;0;������� �������� �������� 
+REDLERS_COUNT;Mechs_;UInt;0;������� �������� �������� 
+NORIAS_COUNT;Mechs_;UInt;2;������� �������� �������� 
+FANS_COUNT;Mechs_;UInt;0;������� �������� �������� 
+MECHS_COUNT;Mechs_;UInt;2;���� ������� ���� ��������� 

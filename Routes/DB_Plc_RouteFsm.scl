@@ -1,0 +1,19 @@
+﻿// ==============================================================================
+// DB_Plc_RouteFsm - Стани FSM маршрутів (злиття State + Work)
+// ==============================================================================
+// Версія: 2.0.2
+// Дата: 2026-03-01
+// ==============================================================================
+
+DATA_BLOCK "DB_Plc_RouteFsm"
+{ S7_Optimized_Access := 'TRUE' }
+VERSION : 2.0
+NON_RETAIN
+
+VAR
+  // Стани FSM для маршрутів (включає persistent + work variables)
+  RoutesFsm : ARRAY[1.."ROUTES_COUNT"] OF "UDT_RouteFsm";
+END_VAR
+
+BEGIN
+END_DATA_BLOCK

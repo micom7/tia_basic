@@ -1,0 +1,91 @@
+﻿// ==============================================================================
+// FC_DeviceRunner - Виконання механізмів
+// ==============================================================================
+// Project  : Elevator_System
+// Author   : Engineering Team
+// Version  : 3.0.0
+// Generated: 2026-01-29
+// ==============================================================================
+
+FUNCTION "FC_DeviceRunner" : VOID
+{ S7_Optimized_Access := 'TRUE' }
+VERSION : 3.0
+
+VAR_IN_OUT
+    Mechs  : ARRAY[*] OF "UDT_BaseMechanism";
+    Redler : ARRAY[*] OF "UDT_Redler";
+    Noria  : ARRAY[*] OF "UDT_Noria";
+    Gate   : ARRAY[*] OF "UDT_Gate2P";
+    Fan    : ARRAY[*] OF "UDT_Fan";
+END_VAR
+
+VAR_TEMP
+    slot : UINT;  // Змінено на UINT для відповідності константі MECHS_COUNT
+    idx  : UINT;
+END_VAR
+
+BEGIN
+    // ==============================================================================
+    // Проходимо через всі слоти базової шини механізмів
+    // ==============================================================================
+    FOR slot := 0 TO "MECHS_COUNT" DO
+        
+        // Пропускаємо порожні слоти
+        IF Mechs[slot].DeviceType = "TYPE_NONE" THEN
+            CONTINUE;
+        END_IF;
+        
+        // Отримуємо індекс у типізованому масиві
+        idx := Mechs[slot].TypedIndex;
+        
+        // ==============================================================================
+        // Виконуємо механізм відповідного типу
+        // ==============================================================================
+        
+        CASE Mechs[slot].DeviceType OF
+            
+            // === РЕДЛЕРИ ===
+            "TYPE_REDLER":
+                IF idx <= "REDLERS_COUNT" THEN
+                    "FC_Redler"(
+                        R := Redler[idx],
+                        B := Mechs[slot]
+                    );
+                END_IF;
+            
+            // === НОРІЇ ===
+            "TYPE_NORIA":
+                IF idx <= "NORIAS_COUNT" THEN
+                    "FC_Noria"(
+                        N := Noria[idx],
+                        B := Mechs[slot]
+                    );
+                END_IF;
+            
+            // === ШИБЕРИ (2-позиційні) ===
+            "TYPE_GATE2P":
+                IF idx <= "GATES2P_COUNT" THEN
+                    "FC_Gate2P"(
+                        G := Gate[idx],
+                        B := Mechs[slot]
+                    );
+                END_IF;
+            
+            // === ВЕНТИЛЯТОРИ ===
+            "TYPE_FAN":
+                IF idx <= "FANS_COUNT" THEN
+                    "FC_Fan"(
+                        F := Fan[idx],
+                        B := Mechs[slot]
+                    );
+                END_IF;
+            
+            // === Невідомий тип (не повинно статися) ===
+            ELSE
+                ; // Нічого не робимо
+                
+        END_CASE;
+        
+    END_FOR;
+    
+END_FUNCTION

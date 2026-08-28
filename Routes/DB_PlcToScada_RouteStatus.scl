@@ -1,0 +1,45 @@
+﻿// ==============================================================================
+// DB_PlcToScada_RouteStatus - Статуси маршрутів та ACK (v2.0)
+// ==============================================================================
+// Версія: 2.0.2 (Mailbox Pattern)
+// Дата: 2026-03-01
+// ==============================================================================
+// ПРИЗНАЧЕННЯ:
+//
+// PLC повідомляє SCADA про:
+// 1. Статус кожного з "ROUTES_COUNT" маршрутів (RoutesSts[1.."ROUTES_COUNT"])
+// 2. Підтвердження прийняття команди з Mailbox (ACK_*)
+//
+// ACK PROTOCOL:
+// - ACK_CommitApplied: останній commit, який PLC обробив
+// - ACK_RouteId: який маршрут був оброблений
+//
+// SCADA перевіряє:
+//   HDR_Commit == ACK_CommitApplied → Mailbox вільний, можна писати
+//   HDR_Commit != ACK_CommitApplied → Mailbox зайнятий, чекати або timeout
+//
+// ROUTE STATUS:
+// - RoutesSts[i].RS_State: поточний стан FSM
+// - RoutesSts[i].RS_ResultCode: результат (200 = RUNNING, 201+ = REJ/ABRT)
+// - RoutesSts[i].RS_Warning: 0=OK, 1=IGNORED_CMD (дублікат START)
+// ==============================================================================
+
+DATA_BLOCK "DB_PlcToScada_RouteStatus"
+{ S7_Optimized_Access := 'TRUE' }
+VERSION : 2.0
+NON_RETAIN
+
+VAR
+  // === ACK: Підтвердження Mailbox ===
+  ACK_CommitApplied : UDINT;  // Останній оброблений commit
+  ACK_RouteId       : USINT;  // Який маршрут був оброблений (1.."ROUTES_COUNT", 0=none)
+
+  // === STATUSES: Статуси маршрутів ===
+  RoutesSts : ARRAY[1.."ROUTES_COUNT"] OF "UDT_RouteStatus";
+END_VAR
+
+BEGIN
+  // Ініціалізація
+  ACK_CommitApplied := 0;
+  ACK_RouteId := 0;
+END_DATA_BLOCK
